@@ -1,0 +1,235 @@
+---
+title: "Titanic.Rmd"
+output: html_document
+---
+
+```{r}
+setwd('/Users/evdokiapopova/Documents/data science club/kaggle_titanic')
+library(ggplot2)
+trainData <- read.csv('train.csv')
+testData <- read.csv('test.csv')
+
+summary(trainData)
+summary(testData)
+```
+```{r}
+names(trainData)
+```
+
+Let's start plotting the features
+
+```{r}
+
+qplot(x = Sex, data = trainData,color = I('black'), fill = I('blue')) + facet_wrap(~Survived)
+
+```
+More female survived than male.
+
+```{r}
+
+qplot(x = Age, data = trainData,color = I('black'), fill = I('blue')) + facet_wrap(~Survived)
+
+```
+Twice as more people of ages 20-30 didn't survive.
+
+```{r}
+qplot(x = Age, data = trainData,color = I('black'), fill = I('blue')) + facet_grid(Sex~Survived)
+```
+
+A lot of males of ages 20-40 didn't survive.
+
+
+```{r}
+
+qplot(x = SibSp, data = trainData,color = I('black'), fill = I('blue')) + facet_wrap(~Survived)
+
+```
+Almost twice as many "single" people died compared to survived. Let's take a look who they were.
+
+```{r}
+qplot(x = Age, data = trainData,color = I('black'), fill = I('blue')) + facet_grid(SibSp~Survived)
+
+# lets take a look only at the people traveling alone
+
+subsetSibSp_0 = subset(trainData, SibSp == 0)
+
+qplot(x = Age, data = subsetSibSp_0,color = I('black'), fill = I('blue')) + facet_grid(Sex~Survived)
+
+```
+
+
+```{r}
+qplot(x = Pclass, data = trainData,color = I('black'), fill = I('blue')) + facet_wrap(~Survived)
+
+```
+```{r}
+qplot(x = Embarked, data = trainData,color = I('black'), fill = I('blue')) + facet_wrap(~Survived)
+
+```
+```{r}
+qplot(x = Fare, data = trainData,color = I('black'), fill = I('green')) + facet_wrap(~Survived) + 
+  scale_x_continuous(limits = c(0,300))
+
+
+```
+
+Combine both training and test data to clean up
+
+```{r}
+# merge both datasets but before create Survived column in test data with NA values
+testData$Survived <- NA
+allData <- rbind(trainData, testData)
+
+head(allData)
+tail(allData)
+```
+```{r}
+# check missing values
+sapply(allData,function(x) sum(is.na(x))) # lots of ages missing and 1 Fare
+sapply(allData, function(x) sum(x=='')) # 2 embarked values are empty 
+
+# unique values of each feature 
+sapply(allData, function(x) length(unique(x)))
+
+```
+
+```{r}
+# lets fill it with some values
+
+# filling age and fare with average values
+
+allData$Age[is.na(allData$Age)] <- round(mean(allData$Age,na.rm=T))
+allData$Fare[is.na(allData$Fare)] <- round(mean(allData$Fare,na.rm=T))
+
+# lots of people Embarked at S, so we fill those with S
+
+sapply(allData, class)
+
+allData$Embarked[allData$Embarked == ''] <- as.factor('S')
+
+```
+
+```{r}
+
+#allData$Gender <- ifelse(allData$Sex == 'male', 1, 0)
+
+allData = subset(allData, select = -c(1,4,9,11))
+
+head(allData)
+```
+
+```{r}
+# split back data
+
+trainData <- allData[1:891,]
+testData <- allData[892:nrow(allData),]
+```
+
+
+```{r}
+library(Hmisc)
+
+#cor(trainData$Age, trainData$Survived)
+
+```
+
+
+```{r}
+library(corrgram)
+corrgram(trainData, order=NULL, lower.panel=panel.shade,
+  upper.panel=NULL, text.panel=panel.txt,
+  main="correlation map of titanic data")
+```
+```{r}
+library(corrplot)
+
+#cor_data <- cor(trainData)
+#head(trainData)
+
+#corrplot(cor_data, method="color", use.names = TRUE)
+
+#names(trainData)
+```
+
+
+Now let's try to build a model using Logistic regression.
+
+**************************************
+Logistic regression
+**************************************
+
+```{r}
+model <- glm(Survived ~ Pclass + Sex + Age + Fare +Embarked ,family=binomial(link='logit'),data=trainData)
+
+summary(model)
+```
+
+Let's test our model
+
+```{r}
+model_predict <- predict(model,newdata=subset(testData,select=c(Pclass, Sex, Age, Fare, Embarked),type='response'))  
+
+#0.78469 score
+
+summary(model_predict)
+
+model_predict <- ifelse(model_predict>=0.5,1,0)
+head(model_predict)
+
+```
+```{r}
+
+predict_submit <- subset(testData, select = c(1))
+head(predict_submit)
+predict_submit$Survived <- model_predict
+
+write.csv(predict_submit, file = "LogitPredict2.csv")
+```
+
+***************************************
+RANDOM FOREST
+***************************************
+
+```{r}
+library(party)
+library(randomForest)
+set.seed(415)
+
+fit <- randomForest(Survived ~ Pclass + Age + SibSp + Parch + Fare +
+                                            Embarked + Sex,
+                      data=trainData, method = "class",
+                      importance=TRUE, 
+                      ntree=2000)
+
+varImpPlot(fit)
+
+Prediction <- predict(fit, testData)
+
+Prediction <- ifelse(Prediction>=0.5,1,0)
+
+
+## submission file
+
+predict_submit$Survived <- Prediction
+
+write.csv(predict_submit, file = "RandomForest1.csv") ## 0.77033 score
+
+```
+
+
+```{r}
+### new random forest
+
+fit <- cforest(as.factor(Survived) ~ Pclass + Age + SibSp + Parch + Fare + Embarked + Sex,data = trainData, controls=cforest_unbiased(ntree=2000, mtry=3))
+
+Prediction <- predict(fit, testData, OOB=TRUE, type = "response")
+
+## submission file
+
+predict_submit$Survived <- Prediction
+
+write.csv(predict_submit, file = "RandomForest2.csv") ## 0.77990 score
+
+```
+
+
